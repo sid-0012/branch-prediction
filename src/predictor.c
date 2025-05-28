@@ -43,6 +43,15 @@ uint32_t *local_history_table; // Local history table (per-PC)
 uint8_t *local_bht; // Local predictor table (2-bit counters)
 uint8_t *choice_bht; // Choice predictor table (2-bit counters)
 
+// Custom predictor data structures
+#define HIST_LEN 16
+#define NUM_PERCEPTRONS 2048
+#define THRESHOLD 45 // THRESHOLD=1.93×HIST_LEN+14
+#define WEIGHT_MAX 31
+#define WEIGHT_MIN -31
+
+int8_t perceptron_table[NUM_PERCEPTRONS][HIST_LEN + 1]; // +1 for bias
+
 //------------------------------------//
 //        Predictor Functions         //
 //------------------------------------//
@@ -92,6 +101,18 @@ init_predictor()
     for (int i = 0; i < (1 << ghistoryBits); i++)
       choice_bht[i] = WT; // Weakly prefer global
   }
+
+  /*
+  CUSTOM
+  */
+  if (bpType == CUSTOM) {
+    // Initialize perceptron table with small random weights (-1, 0, or 1)
+    for (int i = 0; i < NUM_PERCEPTRONS; i++) {
+      for (int j = 0; j < HIST_LEN + 1; j++) {
+        perceptron_table[i][j] = (rand() % 3) - 1; // -1, 0, or 1
+      }
+    }
+  }
 }
 
 // Make a prediction for conditional branch instruction at PC 'pc'
@@ -130,7 +151,16 @@ make_prediction(uint32_t pc)
         return local_pred;
       }
     }
-    case CUSTOM:
+    case CUSTOM: {
+      int index = pc & (NUM_PERCEPTRONS - 1);
+      int sum = perceptron_table[index][0]; // bias
+      for (int i = 0; i < HIST_LEN; i++) {
+          int bit = (ghr >> i) & 1;
+          sum += perceptron_table[index][i + 1] * (bit ? 1 : -1);
+      }
+      uint8_t prediction = (sum >= 0) ? TAKEN : NOTTAKEN;
+      return prediction;
+    }
     default:
       break;
   }
@@ -199,6 +229,29 @@ train_predictor(uint32_t pc, uint8_t outcome)
       // Update global history
       ghr = ((ghr << 1) | outcome) & ((1 << ghistoryBits) - 1);
       break;
+    }
+    case CUSTOM: {
+      int index = pc & (NUM_PERCEPTRONS - 1);
+      int sum = perceptron_table[index][0]; // bias
+      for (int i = 0; i < HIST_LEN; i++) {
+          int bit = (ghr >> i) & 1;
+          sum += perceptron_table[index][i + 1] * (bit ? 1 : -1);
+      }
+      uint8_t prediction = (sum >= 0) ? TAKEN : NOTTAKEN;
+      if (prediction != outcome || abs(sum) <= THRESHOLD) {
+        int t = (outcome == TAKEN) ? 1 : -1;
+        // Update bias with saturation
+        perceptron_table[index][0] += t;
+        if (perceptron_table[index][0] > WEIGHT_MAX) perceptron_table[index][0] = WEIGHT_MAX;
+        if (perceptron_table[index][0] < WEIGHT_MIN) perceptron_table[index][0] = WEIGHT_MIN;
+        // Update weights with saturation
+        for (int i = 0; i < HIST_LEN; i++) {
+            int bit = (ghr >> i) & 1;
+            perceptron_table[index][i + 1] += t * (bit ? 1 : -1);
+            if (perceptron_table[index][i + 1] > WEIGHT_MAX) perceptron_table[index][i + 1] = WEIGHT_MAX;
+            if (perceptron_table[index][i + 1] < WEIGHT_MIN) perceptron_table[index][i + 1] = WEIGHT_MIN;
+        }
+      }
     }
     default:
       break;
