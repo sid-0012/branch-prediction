@@ -44,9 +44,9 @@ uint8_t *local_bht; // Local predictor table (2-bit counters)
 uint8_t *choice_bht; // Choice predictor table (2-bit counters)
 
 // Custom predictor data structures
-#define HIST_LEN 16
-#define NUM_PERCEPTRONS 2048
-#define THRESHOLD 45 // THRESHOLD=1.93×HIST_LEN+14
+#define HIST_LEN 12
+#define NUM_PERCEPTRONS 512
+#define THRESHOLD 37 // THRESHOLD=1.93×HIST_LEN+14
 #define WEIGHT_MAX 31
 #define WEIGHT_MIN -31
 
@@ -110,6 +110,7 @@ init_predictor()
     for (int i = 0; i < NUM_PERCEPTRONS; i++) {
       for (int j = 0; j < HIST_LEN + 1; j++) {
         perceptron_table[i][j] = (rand() % 3) - 1; // -1, 0, or 1
+        // perceptron_table[i][j] = 1;
       }
     }
   }
@@ -252,6 +253,8 @@ train_predictor(uint32_t pc, uint8_t outcome)
             if (perceptron_table[index][i + 1] < WEIGHT_MIN) perceptron_table[index][i + 1] = WEIGHT_MIN;
         }
       }
+      // Update global history
+      ghr = ((ghr << 1) | outcome) & ((1 << HIST_LEN) - 1);
     }
     default:
       break;
